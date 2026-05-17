@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>タイミングガイド</title>
+<style>
+  body { font-family: sans-serif; text-align: center; padding-top: 20px; background: black; color: white; }
+  .text { font-size: 55px; display: inline-block; margin-right: 10px; }
+  #nowTime { font-size: 150px; margin-bottom: 10px; }
+  .btn { font-size: 80px; padding: 30px 60px; margin: 20px; }
+  .kaibtn { font-size: 80px; padding: 30px 80px; margin: 20px; background-color: #4CAF50; color: white; border: none; border-radius: 20px; }
+  .kaibtn:disabled { background-color: gray; }
+  .teibtn { font-size: 80px; padding: 30px 80px; margin: 20px; background-color: #FF0000; color: white; border: none; border-radius: 20px; }
+  .teibtn:disabled { background-color: gray; }
+  select, input { font-size: 80px; padding: 16px 24px; margin: 20px; }
+</style>
+</head>
+<body>
+<div class="text">タイミングガイド</div>
+<div id="nowTime"></div>
+<div id="status" class="text">停止中</div>
+<div id="count" class="text"></div>
+
+<input type="time" id="startTime" value="10:00" step="1"><br>
+
+<div class="text">何秒前から鳴らす</div>
+<select id="preBellSelect">
+  <option value="1">1 秒前</option>
+  <option value="2">2 秒前</option>
+  <option value="3">3 秒前</option>
+  <option value="5" selected>5 秒前</option>
+  <option value="7">7 秒前</option>
+  <option value="9">9 秒前</option>
+</select>
+
+<hr>
+
+<button id="startBtn" class="kaibtn">開始</button>
+<button id="stopBtn" class="teibtn" disabled>停止</button>
+
+<hr>
+
+<div class="text">間隔（秒</div>
+<select id="intervalSelect">
+  <option value="5">5 秒</option>
+  <option value="10">10 秒</option>
+  <option value="15">15 秒</option>
+  <option value="20">20 秒</option>
+  <option value="30">30 秒</option>
+  <option value="45" selected>45 秒</option>
+  <option value="60">60 秒</option>
+</select>
+
+<hr>
+
+<div class="text">回数</div>
+<select id="countSelect">
+  <option value="5">5 回</option>
+  <option value="10" selected>10 回</option>
+  <option value="15">15 回</option>
+  <option value="20">20 回</option>
+  <option value="50">50 回</option>
+  <option value="100">100回</option>
+  <option value="200">200回</option>
+</select>
+
+<div class="text">☆画面が消えるとストップするため</div>
+<div class="text">設定→ディスプレイ→画面のタイムアウト→30分等に設定して下さい。</div>
+<div class="text">☆時間設定を削除すると</div>
+<div class="text">10秒前から開始できます。</div>
+
+<script>
+let preBellSec = 5;
+let intervalSec = 45;
+let maxCount = 10;
+
+let timeouts = [];
+let bellTimes = [];
+let nextBellIndex = -1;
+
+/* ★ 状態保存 */
+function saveState() {
+  const state = {
+    preBellSec,
+    intervalSec,
+    maxCount,
+    bellTimes,
+    nextBellIndex,
+    startBtnDisabled: document.getElementById("startBtn").disabled,
+    stopBtnDisabled: document.getElementById("stopBtn").disabled,
+    status: document.getElementById("status").textContent,
+
+    // ★ 追加：開始時刻 input の値を保存
+    startTimeValue: document.getElementById("startTime").value
+  };
+  localStorage.setItem("bellTimerState", JSON.stringify(state));
+}
+
+
+/* ★ 状態読み込み */
+function loadState() {
+  const s = localStorage.getItem("bellTimerState");
+  return s ? JSON.parse(s) : null;
+}
+
+/* ★ 状態削除 */
+function clearStateStorage() {
+  localStorage.removeItem("bellTimerState");
+}
+
+/* 現在時刻表示 */
+setInterval(() => {
+  const now = new Date();
+  document.getElementById("nowTime").textContent =
+    now.toTimeString().split(" ")[0];
+}, 500);
+
+/* カウントダウン */
+function updateCountdown() {
+  if (nextBellIndex < 0 || nextBellIndex >= bellTimes.length) {
+    document.getElementById("count").textContent = "";
+    return;
+  }
+
+  const target = bellTimes[nextBellIndex];
+  const diff = Math.ceil((target - Date.now()) / 1000);
+
+  if (diff >= 0) {
+    document.getElementById("count").textContent = `残り ${diff} 秒`;
+  } else {
+    document.getElementById("count").textContent = "";
+  }
+}
+setInterval(updateCountdown, 1000);
+
+/* チーン音 */
+function playBell() {
+  const ctx = new (window.AudioContext || window.webkitAudioContext)();
+  const osc = ctx.createOscillator();
+  const gain = ctx.createGain();
+  const now = ctx.currentTime;
+
+  osc.frequency.value = 880;
+  gain.gain.setValueAtTime(1.9, now);
+  gain.gain.exponentialRampToValueAtTime(0.01, now + 1.25);
+
+  osc.connect(gain);
+  gain.connect(ctx.destination);
+
+  osc.start(now);
+  osc.stop(now + 1.25);
+
+  setTimeout(() => ctx.close(), 300);
+}
+
+/* 全予約解除 */
+function clearAll() {
+  timeouts.forEach(id => clearTimeout(id));
+  timeouts = [];
+  bellTimes = [];
+  nextBellIndex = -1;
+}
+
+/* 開始 */
+document.getElementById("startBtn").onclick = () => {
+  clearAll();
+
+  preBellSec = parseInt(document.getElementById("preBellSelect").value);
+  intervalSec = parseInt(document.getElementById("intervalSelect").value);
+  maxCount = parseInt(document.getElementById("countSelect").value);
+
+  const t = document.getElementById("startTime").value;
+
+  document.getElementById("startBtn").disabled = true;
+  document.getElementById("stopBtn").disabled = false;
+
+  let firstBellMs;
+
+  if (!t) {
+    firstBellMs = Date.now() + 10000;
+    document.getElementById("status").textContent = "10秒前から開始します";
+    navigator.vibrate(2000);
+    playBell();
+  } else {
+    const [h, m] = t.split(":");
+    const target = new Date();
+    target.setHours(parseInt(h), parseInt(m), 0, 0);
+    if (target.getTime() <= Date.now()) target.setDate(target.getDate() + 1);
+    firstBellMs = target.getTime();
+    document.getElementById("status").textContent = "開始時刻を待機中";
+  }
+
+  bellTimes = [];
+  for (let i = 0; i < maxCount; i++) {
+    bellTimes.push(firstBellMs + intervalSec * 1000 * i);
+  }
+
+  nextBellIndex = 0;
+
+  const now = Date.now();
+
+  bellTimes.forEach((bellTime, i) => {
+    const msToBell = bellTime - now;
+    const preBellTime = bellTime - preBellSec * 1000;
+    const msToPre = preBellTime - now;
+
+    if (msToPre > 0) {
+      timeouts.push(setTimeout(() => {
+        navigator.vibrate(preBellSec * 1000);
+        playBell();
+      }, msToPre));
+    }
+
+    if (msToBell > 0) {
+      timeouts.push(setTimeout(() => {
+        document.getElementById("status").textContent = `次${i+2}回目`;
+        playBell();
+        nextBellIndex = i + 1;
+
+        if (nextBellIndex >= bellTimes.length) {
+          document.getElementById("status").textContent = "終了しました";
+          nextBellIndex = -1;
+        }
+
+        saveState();  // ★ 本ベル後も保存
+      }, msToBell));
+    }
+  });
+
+  saveState();  // ★ 開始時に保存
+};
+
+/* 停止 */
+document.getElementById("stopBtn").onclick = () => {
+  clearAll();
+  clearStateStorage();  // ★ 状態削除
+  document.getElementById("status").textContent = "停止中";
+  document.getElementById("startBtn").disabled = false;
+  document.getElementById("stopBtn").disabled = true;
+};
+
+/* ★ ページ読み込み時に復元 */
+window.onload = () => {
+  const state = loadState();
+  if (!state) return;
+
+  preBellSec = state.preBellSec;
+  intervalSec = state.intervalSec;
+  maxCount = state.maxCount;
+  bellTimes = state.bellTimes;
+  nextBellIndex = state.nextBellIndex;
+
+  document.getElementById("startBtn").disabled = state.startBtnDisabled;
+  document.getElementById("stopBtn").disabled = state.stopBtnDisabled;
+  document.getElementById("status").textContent = state.status;
+
+  // ★ 追加：開始時刻 input を復元
+  document.getElementById("startTime").value = state.startTimeValue;
+
+  const now = Date.now();
+
+  for (let i = nextBellIndex; i < bellTimes.length; i++) {
+    const bellTime = bellTimes[i];
+    const msToBell = bellTime - now;
+    const preBellTime = bellTime - preBellSec * 1000;
+    const msToPre = preBellTime - now;
+
+    if (msToPre > 0) {
+      timeouts.push(setTimeout(() => {
+        navigator.vibrate(preBellSec * 1000);
+        playBell();
+      }, msToPre));
+    }
+
+    if (msToBell > 0) {
+      timeouts.push(setTimeout(() => {
+        document.getElementById("status").textContent = `次${i+2}回目`;
+        playBell();
+        nextBellIndex = i + 1;
+        saveState();
+      }, msToBell));
+    }
+  }
+};
+</script>
+
+</body>
+</html>
